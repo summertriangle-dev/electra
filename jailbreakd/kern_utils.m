@@ -128,7 +128,7 @@ uint32_t rk32(uint64_t kaddr) {
   kern_return_t err;
   uint32_t val = 0;
   mach_vm_size_t outsize = 0;
-	
+
   err = mach_vm_read_overwrite(tfpzero,
                                (mach_vm_address_t)kaddr,
                                (mach_vm_size_t)sizeof(uint32_t),
@@ -139,7 +139,7 @@ uint32_t rk32(uint64_t kaddr) {
     sleep(3);
     return 0;
   }
-  
+
   if (outsize != sizeof(uint32_t)){
     printf("tfp0 read was short (expected %lx, got %llx\n", sizeof(uint32_t), outsize);
     sleep(3);
@@ -161,13 +161,13 @@ void wk32(uint64_t kaddr, uint32_t val) {
     sleep(3);
     return;
   }
-  
+
   kern_return_t err;
   err = mach_vm_write(tfpzero,
                       (mach_vm_address_t)kaddr,
                       (vm_offset_t)&val,
                       (mach_msg_type_number_t)sizeof(uint32_t));
-  
+
   if (err != KERN_SUCCESS) {
     printf("tfp0 write failed: %s %x\n", mach_error_string(err), err);
     return;
@@ -185,19 +185,19 @@ mach_port_t prepare_user_client() {
   kern_return_t err;
   mach_port_t user_client;
   io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("IOSurfaceRoot"));
-  
+
   if (service == IO_OBJECT_NULL){
     printf(" [-] unable to find service\n");
     exit(EXIT_FAILURE);
   }
-  
+
   err = IOServiceOpen(service, mach_task_self(), 0, &user_client);
   if (err != KERN_SUCCESS){
     printf(" [-] unable to get user client connection\n");
     exit(EXIT_FAILURE);
   }
-  
-  
+
+
   printf("got user client: 0x%x\n", user_client);
   return user_client;
 }
@@ -217,16 +217,16 @@ uint64_t task_self_addr() {
 
 uint64_t find_port(mach_port_name_t port){
   uint64_t task_port_addr = task_self_addr();
-  
+
   uint64_t task_addr = rk64(task_port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT));
-  
+
   uint64_t itk_space = rk64(task_addr + koffset(KSTRUCT_OFFSET_TASK_ITK_SPACE));
-  
+
   uint64_t is_table = rk64(itk_space + koffset(KSTRUCT_OFFSET_IPC_SPACE_IS_TABLE));
-  
+
   uint32_t port_index = port >> 8;
   const int sizeof_ipc_entry_t = 0x18;
-  
+
   uint64_t port_addr = rk64(is_table + (port_index * sizeof_ipc_entry_t));
   return port_addr;
 }
@@ -240,7 +240,14 @@ uint64_t find_port(mach_port_name_t port){
 uint64_t s = kalloc(strlen(str)+1); kwrite(s, str, strlen(str)); \
 kexecute(user_client, fake_client, rk64(rk64(dict)+SetObjectWithCharP), dict, s, val, 0, 0, 0, 0); \
             }
+#define OSDictionary_SetItem2(dict, str, val) \
+  kexecute(user_client, fake_client, rk64(rk64(dict)+SetObjectWithCharP), dict, str, val, 0, 0, 0, 0)
 #define OSString_CStringPtr(str) rk64(str+0x10)
+
+uint32_t OSArray_Merge_offset = (8*30);
+
+// FIXME hardcoded offset!!
+#define OSUnserializeXML_offset (0xfffffff0075192ac)
 
 bool kexecute_lock = false;
 
@@ -256,11 +263,11 @@ uint64_t kexecute(mach_port_t user_client, uint64_t fake_client, uint64_t addr, 
     // This jumps to our gadget, which returns +0x40 into our fake user_client, which we can modify. The function is then called on the object. But how C++ actually works is that the
     // function is called with the first arguement being the object (referenced as `this`). Because of that, the first argument of any function we call is the object, and everything else is passed
     // through like normal.
-    
+
     // Because the gadget gets the trap at user_client+0x40, we have to overwrite the contents of it
     // We will pull a switch when doing so - retrieve the current contents, call the trap, put back the contents
     // (i'm not actually sure if the switch back is necessary but meh)
-    
+
     uint64_t offx20 = rk64(fake_client+0x40);
     uint64_t offx28 = rk64(fake_client+0x48);
     wk64(fake_client+0x40, x0);
@@ -298,6 +305,14 @@ int dumppid(int pd){
       }
   }
 }
+
+// this should be good enough...
+const char EXTRA_SANDBOX_READS[] = (
+  "<plist version=\"1.0\"><array>"
+    "<string>/bootstrap/</string>"
+    "<string>/Library/</string>"
+    "<string>/private/var/mobile/Library/Preferences/</string>"
+  "</array></plist>");
 
 int setcsflagsandplatformize(int pd){
   int tries = 3;
@@ -338,14 +353,91 @@ int setcsflagsandplatformize(int pd){
               NSLog(@"%@",@"Setting Entitlements...");
 #endif
 
-              OSDictionary_SetItem(amfi_entitlements, "get-task-allow", find_OSBoolean_True());
-              OSDictionary_SetItem(amfi_entitlements, "com.apple.private.skip-library-validation", find_OSBoolean_True());
+              static uint64_t get_task_allow_cstrp = 0;
+              static uint64_t cap_slv_cstrp = 0;
+              static uint64_t exception_cstrp = 0;
+              static uint64_t exception_payloadp = 0;
+              if (!get_task_allow_cstrp) {
+                NSLog(@"initializing our one-time kernel stuff!!");
+                const char sp[] = "com.apple.security.exception.files.absolute-path.read-only\0get-task-allow\0com.apple.private.skip-library-validation";
+                uint64_t s2_offset = strlen(sp) + 1;
+                uint64_t s3_offset = strlen(sp + s2_offset) + 1;
+                uint64_t s = kalloc(sizeof(sp));
+                kwrite(s, sp, sizeof(sp));
+
+                exception_cstrp = s;
+                get_task_allow_cstrp = s + s2_offset;
+                cap_slv_cstrp = get_task_allow_cstrp + s3_offset;
+
+                NSLog(@"done setting strings...");
+
+                // FIXME we're leaking this kalloc
+                uint64_t her_xml = kalloc(sizeof(EXTRA_SANDBOX_READS));
+                kwrite(her_xml, EXTRA_SANDBOX_READS, sizeof(EXTRA_SANDBOX_READS));
+
+                // kexecute only returns the low bytes of the real value
+                exception_payloadp = 0xffffffe000000000 | kexecute(user_client, fake_client, kernel_slide + OSUnserializeXML_offset, her_xml, 0, 0, 0, 0, 0, 0);
+                NSLog(@"loaded our OSArray into kernel... at 0x%16llx", exception_payloadp);
+
+                // char my_errors[1024];
+                // kread(OSString_CStringPtr(errors + 8), my_errors, 1024 - 8);
+                // NSLog(@"OSUnserializeXML error: %s", my_errors);
+              }
+
+              NSLog(@"injecting entitlements now");
+              OSDictionary_SetItem2(amfi_entitlements, get_task_allow_cstrp, find_OSBoolean_True());
+              OSDictionary_SetItem2(amfi_entitlements, cap_slv_cstrp, find_OSBoolean_True());
+
+              int found = 0;
+              for (int idx = 0; idx < OSDictionary_ItemCount(amfi_entitlements); idx++) {
+                  uint64_t key = OSDictionary_ItemKey(OSDictionary_ItemBuffer(amfi_entitlements), idx);
+                  uint64_t keyOSStr = OSString_CStringPtr(key);
+
+                  // OSString getLength goes like...
+                  // fffffff00751561c         ldr        w8, [x0, #0xc]
+                  // fffffff007515620         lsr        w8, w8, #0xe
+                  // fffffff007515624         sub        w0, w8, #0x1
+                  // fffffff007515628         ret
+
+                  // length != strlen(com.apple.security.blah...)
+                  size_t length = ((rk32(key + 0xc) >> 0xe) & 0x3ffff) /* - 1 */;
+                  if (length != get_task_allow_cstrp - exception_cstrp) {
+                    continue;
+                  }
+
+                  char s[get_task_allow_cstrp - exception_cstrp];
+                  kread(keyOSStr, s, length);
+                  NSLog(@"Entitlement: %s", s);
+
+                  if (!strcmp(s, "com.apple.security.exception.files.absolute-path.read-only")) {
+                    found = idx;
+                    break;
+                  }
+              }
+
+              if (found) {
+                uint64_t arrayp = OSDictionary_ItemValue(OSDictionary_ItemBuffer(amfi_entitlements), found);
+                if (arrayp == exception_payloadp) {
+                  NSLog(@"extending our exception array, wtf?? reinjecting?");
+                } else {
+                  // this code doesn't work
+#if 0
+                  NSLog(@"extending array %10llx, current exc count %u", arrayp, rk32(arrayp + 0x14));
+                  NSLog(@"wtf are we calling?? %10llx", rk64(rk64(arrayp)+OSArray_Merge_offset));
+                  kexecute(user_client, fake_client, rk64(rk64(arrayp)+OSArray_Merge_offset), arrayp, exception_payloadp, 0, 0, 0, 0, 0);
+                  NSLog(@"called merge, current exc count %u", arrayp, rk32(arrayp + 0x14));
+#endif
+                }
+              } else {
+                NSLog(@"no previous exception entitlement");
+                OSDictionary_SetItem2(amfi_entitlements, exception_cstrp, exception_payloadp);
+              }
 
               NSLog(@"Set Entitlements on PID %d", pd);
 
               uint64_t textvp = rk64(proc + offsetof_p_textvp); //vnode of executable
               off_t textoff = rk64(proc + offsetof_p_textoff);
-              
+
 #if JAILBREAKDDEBUG
               NSLog(@"\t__TEXT at 0x%llx. Offset: 0x%llx", textvp, textoff);
 #endif
@@ -356,19 +448,19 @@ int setcsflagsandplatformize(int pd){
 #if JAILBREAKDDEBUG
                 NSLog(@"\tVNode Type: 0x%x. Tag: 0x%x.", vnode_type, vnode_tag);
 #endif
-                
+
                 if (vnode_type == 1){
                     uint64_t ubcinfo = rk64(textvp + offsetof_v_ubcinfo);
 #if JAILBREAKDDEBUG
                     NSLog(@"\t\tUBCInfo at 0x%llx.\n", ubcinfo);
 #endif
-                    
+
                     uint64_t csblobs = rk64(ubcinfo + offsetof_ubcinfo_csblobs);
                     while (csblobs != 0){
 #if JAILBREAKDDEBUG
                         NSLog(@"\t\t\tCSBlobs at 0x%llx.", csblobs);
 #endif
-                        
+
                         cpu_type_t csblob_cputype = rk32(csblobs + offsetof_csb_cputype);
                         unsigned int csblob_flags = rk32(csblobs + offsetof_csb_flags);
                         off_t csb_base_offset = rk64(csblobs + offsetof_csb_base_offset);
@@ -386,7 +478,7 @@ int setcsflagsandplatformize(int pd){
                         csb_platform_binary = rk32(csblobs + offsetof_csb_platform_binary);
 #if JAILBREAKDDEBUG
                         NSLog(@"\t\t\tCSBlob Signer Type: 0x%x. Platform Binary: %d Path: %d", csb_signer_type, csb_platform_binary, csb_platform_path);
-                        
+
                         NSLog(@"\t\t\t\tEntitlements at 0x%llx.\n", csb_entitlements);
 #endif
                         csblobs = rk64(csblobs);
