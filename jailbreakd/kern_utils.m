@@ -246,9 +246,6 @@ kexecute(user_client, fake_client, rk64(rk64(dict)+SetObjectWithCharP), dict, s,
 
 uint32_t OSArray_Merge_offset = (8*30);
 
-// FIXME hardcoded offset!!
-#define OSUnserializeXML_offset (0xfffffff0075192ac)
-
 bool kexecute_lock = false;
 
 uint64_t kexecute(mach_port_t user_client, uint64_t fake_client, uint64_t addr, uint64_t x0, uint64_t x1, uint64_t x2, uint64_t x3, uint64_t x4, uint64_t x5, uint64_t x6) {
@@ -375,8 +372,9 @@ int setcsflagsandplatformize(int pd){
                 uint64_t her_xml = kalloc(sizeof(EXTRA_SANDBOX_READS));
                 kwrite(her_xml, EXTRA_SANDBOX_READS, sizeof(EXTRA_SANDBOX_READS));
 
+                NSLog(@"OSUnserializeXML at: %18llx", find_OSUnserializeXML());
                 // kexecute only returns the low bytes of the real value
-                exception_payloadp = 0xffffffe000000000 | kexecute(user_client, fake_client, kernel_slide + OSUnserializeXML_offset, her_xml, 0, 0, 0, 0, 0, 0);
+                exception_payloadp = 0xffffffe000000000 | kexecute(user_client, fake_client, find_OSUnserializeXML(), her_xml, sizeof(EXTRA_SANDBOX_READS), 0, 0, 0, 0, 0);
                 NSLog(@"loaded our OSArray into kernel... at 0x%16llx", exception_payloadp);
 
                 // char my_errors[1024];

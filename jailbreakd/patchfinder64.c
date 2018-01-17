@@ -421,7 +421,8 @@ follow_cbz(const uint8_t *buf, addr_t cbz)
 #include <mach-o/loader.h>
 
 #ifndef __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__
-    #define __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__
+#warning "not iphoneos!"
+//   #define __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__
 #endif
 
 #ifdef __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__
@@ -891,7 +892,11 @@ addr_t find_amficache(void) {
 
 uint64_t _kread64(uint64_t where) {
     uint64_t out;
+#ifdef __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__
     kread(where, &out, sizeof(uint64_t));
+#else
+    memcpy(&out, kernel + where - kerndumpbase, 8);
+#endif
     return out;
 }
 
@@ -925,4 +930,29 @@ addr_t find_OSBoolean_True(void) {
 
 addr_t find_OSBoolean_False(void) {
     return find_OSBoolean_True()+8;
+}
+
+/* whatever this is, it's not good */
+addr_t find_OSUnserializeXML(void) {
+    uint8_t *ldr_w8_atx0_and_cmp_0xd3 = boyermoore_horspool_memmem(kernel, kernel_size, 
+        (const uint8_t *)"\x08\x00\x40\x39\x1F\x4D\x03\x71", 8);
+
+    if (!ldr_w8_atx0_and_cmp_0xd3) {
+        return 0;
+    }
+
+    uint32_t *pc = 0;
+    int did_it = 0;
+    for (pc = (uint32_t *)ldr_w8_atx0_and_cmp_0xd3 - 4; (uint8_t *)pc > ldr_w8_atx0_and_cmp_0xd3 - 128; pc--) {
+        if ((*pc & /*0xff03c06f*/ 0x6fc003ff) == /*0xff030041*/ 0x410003ff) {
+            did_it = 1;
+            break;
+        }
+    }
+
+    if (did_it) {
+        return (addr_t)((uint8_t *)pc - kernel) + kerndumpbase;
+    }
+
+    return 0;
 }
