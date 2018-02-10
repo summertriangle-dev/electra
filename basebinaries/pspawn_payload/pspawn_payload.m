@@ -59,6 +59,8 @@ const char* xpcproxy_blacklist[] = {
     "OTAPKIAssetTool",        // h_h
     "cfprefsd",               // o_o
     "jailbreakd",             // don't inject into jbd since we'd have to call to it
+    "com.apple.syslogd",
+    "com.apple.logd",
     NULL
 };
 
