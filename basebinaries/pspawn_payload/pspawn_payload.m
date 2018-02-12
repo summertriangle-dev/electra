@@ -192,7 +192,19 @@ int fake_posix_spawn_common(pid_t * pid, const char* path, const posix_spawn_fil
             log_file = NULL;
         }
 #endif
-        jb_oneshot_entitle_now(getpid(), FLAG_ENTITLE | FLAG_PLATFORMIZE | FLAG_SANDBOX | FLAG_SIGCONT | FLAG_WAIT_EXEC | FLAG_ATTRIBUTE_XPCPROXY);
+        int try = 3;
+        int ok = jb_oneshot_entitle_now(getpid(), FLAG_ENTITLE | FLAG_PLATFORMIZE | FLAG_SANDBOX | FLAG_SIGCONT | FLAG_WAIT_EXEC | FLAG_ATTRIBUTE_XPCPROXY);
+        while (!ok && try > 0) {
+            DEBUGLOG("%d failed to oneshot_entitle_now, trying again in 0.5sec", getpid());
+            usleep(500000);
+            try--;
+            ok = jb_oneshot_entitle_now(getpid(), FLAG_ENTITLE | FLAG_PLATFORMIZE | FLAG_SANDBOX | FLAG_SIGCONT | FLAG_WAIT_EXEC | FLAG_ATTRIBUTE_XPCPROXY);
+        }
+
+        if (!ok) {
+            DEBUGLOG("%d: Let me ferry your soul to Hell.", getpid());
+            abort();
+        }
         // dont leak jbd fd into execd process
         origret = old(pid, path, file_actions, newattrp, argv, newenvp);
     } else {
@@ -202,7 +214,18 @@ int fake_posix_spawn_common(pid_t * pid, const char* path, const posix_spawn_fil
         if (origret == 0) {
             if (pid != NULL) *pid = gotpid;
             jb_entitle(global_jbc, gotpid, FLAG_ENTITLE | FLAG_PLATFORMIZE | FLAG_SANDBOX | FLAG_SIGCONT | (FLAG_ATTRIBUTE_XPCPROXY >> 1), ^(int result) {
-                DEBUGLOG("jailbreakd xpc returned");
+                DEBUGLOG("jailbreakd xpc returned: %d", result);
+                if (!result) {
+                    // please respawn :----)
+                    DEBUGLOG("%d: from ashes to ashes, dust to dust.", gotpid);
+                    kill(gotpid, 9);
+
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        jb_connection_t dead = global_jbc;
+                        global_jbc = jb_connect();
+                        jb_disconnect(dead);
+                    });
+                }
             });
             // calljailbreakd(gotpid, JAILBREAKD_COMMAND_ENTITLE_AND_SIGCONT);
         }
