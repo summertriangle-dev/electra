@@ -106,14 +106,16 @@ int jb_fix_setuid_now(jb_connection_t connection, pid_t pid) {
     return ret;
 }
 
-void jb_oneshot_entitle_now(pid_t pid, uint32_t what) {
+int jb_oneshot_entitle_now(pid_t pid, uint32_t what) {
     jb_connection_t c = jb_connect();
-    jb_entitle_now(c, pid, what);
+    int ret = jb_entitle_now(c, pid, what);
     jb_disconnect(c);
+    return ret;
 }
 
-void jb_oneshot_fix_setuid_now(pid_t pid) {
+int jb_oneshot_fix_setuid_now(pid_t pid) {
     jb_connection_t c = jb_connect();
-    jb_fix_setuid_now(c, pid);
+    int ret = jb_fix_setuid_now(c, pid);
     jb_disconnect(c);
+    return ret;
 }

@@ -32,5 +32,5 @@ extern void jb_disconnect(jb_connection_t connection);
 extern int jb_entitle_now(jb_connection_t connection, pid_t pid, uint32_t what);
 extern int jb_fix_setuid_now(jb_connection_t connection, pid_t pid);
 
-extern void jb_oneshot_entitle_now(pid_t pid, uint32_t what);
-extern void jb_oneshot_fix_setuid_now(pid_t pid);
+extern int jb_oneshot_entitle_now(pid_t pid, uint32_t what);
+extern int jb_oneshot_fix_setuid_now(pid_t pid);
